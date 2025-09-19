@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LSTM Autoencoder Forecasting Pipeline</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .header h1 {
+            color: #2d3748;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #718096;
+            font-size: 1.1rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .pipeline {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+        
+        .stage {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+            border-left: 5px solid;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .stage:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.12);
+        }
+        
+        .stage.data { border-left-color: #e53e3e; }
+        .stage.preprocessing { border-left-color: #dd6b20; }
+        .stage.model { border-left-color: #38a169; }
+        .stage.training { border-left-color: #3182ce; }
+        .stage.evaluation { border-left-color: #805ad5; }
+        
+        .stage-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .stage-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-size: 24px;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .data .stage-icon { background: #e53e3e; }
+        .preprocessing .stage-icon { background: #dd6b20; }
+        .model .stage-icon { background: #38a169; }
+        .training .stage-icon { background: #3182ce; }
+        .evaluation .stage-icon { background: #805ad5; }
+        
+        .stage-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .stage-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 15px;
+        }
+        
+        .content-block {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .content-block h4 {
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        
+        .content-block ul {
+            list-style: none;
+            color: #4a5568;
+        }
+        
+        .content-block li {
+            padding: 5px 0;
+            position: relative;
+            padding-left: 20px;
+        }
+        
+        .content-block li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        .model-arch {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0e7ff 100%);
+            padding: 25px;
+            border-radius: 12px;
+            border: 2px solid #3b82f6;
+            margin-top: 20px;
+        }
+        
+        .arch-flow {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .arch-box {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+            min-width: 120px;
+            border: 2px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+        
+        .arch-box:hover {
+            border-color: #3b82f6;
+            transform: scale(1.05);
+        }
+        
+        .arch-box h5 {
+            color: #1e40af;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .arch-box p {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        
+        .arrow {
+            font-size: 24px;
+            color: #3b82f6;
+            font-weight: bold;
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .metric-card {
+            background: linear-gradient(135deg, #fef7ff 0%, #f3e8ff 100%);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid #a855f7;
+        }
+        
+        .metric-card h5 {
+            color: #7c3aed;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .metric-card p {
+            color: #6b46c1;
+            font-size: 0.9rem;
+        }
+        
+        .flow-arrow {
+            text-align: center;
+            font-size: 30px;
+            color: #667eea;
+            margin: 20px 0;
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% {
+                transform: translateY(0);
+            }
+            40% {
+                transform: translateY(-10px);
+            }
+            60% {
+                transform: translateY(-5px);
+            }
+        }
+        
+        .code-snippet {
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            margin-top: 15px;
+            overflow-x: auto;
+        }
+        
+        .highlight {
+            background: rgba(102, 126, 234, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            margin-top: 15px;
+        }
+        
+        .highlight strong {
+            color: #667eea;
+        }
+        
+        @media (max-width: 768px) {
+            .stage-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .arch-flow {
+                flex-direction: column;
+            }
+            
+            .arrow {
+                transform: rotate(90deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 LSTM Autoencoder Forecasting Pipeline</h1>
+            <p>A comprehensive time series forecasting system using LSTM autoencoders with attention mechanisms for 48-hour demand prediction</p>
+        </div>
+        
+        <div class="pipeline">
+            <!-- Stage 1: Data Loading -->
+            <div class="stage data">
+                <div class="stage-header">
+                    <div class="stage-icon">📊</div>
+                    <div class="stage-title">Stage 1: Data Loading & Initial Processing</div>
+                </div>
+                <div class="stage-content">
+                    <div class="content-block">
+                        <h4>Data Source</h4>
+                        <ul>
+                            <li>CSV file: 'Demand_with_Temperature.csv'</li>
+                            <li>DateTime index with 5-minute cadence</li>
+                            <li>Target variable: 'TOTAL' (demand)</li>
+                            <li>Features: Temperature, Outage, Holiday flags, etc.</li>
+                        </ul>
+                    </div>
+                    <div class="content-block">
+                        <h4>Basic Cleaning</h4>
+                        <ul>
+                            <li>Fill missing values with 0 for categorical variables</li>
+                            <li>Interpolate temperature values</li>
+                            <li>Ensure proper datetime formatting</li>
+                            <li>Verify 5-minute frequency consistency</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="highlight">
+                    <strong>Key Insight:</strong> The system expects 5-minute interval data and performs frequency validation to ensure data consistency.
+                </div>
+            </div>
+            
+            <div class="flow-arrow">↓</div>
+            
+            <!-- Stage 2: Feature Engineering -->
+            <div class="stage preprocessing">
+                <div class="stage-header">
+                    <div class="stage-icon">⚙️</div>
+                    <div class="stage-title">Stage 2: Feature Engineering & Preprocessing</div>
+                </div>
+                <div class="stage-content">
+                    <div class="content-block">
+                        <h4>Cyclical Time Features</h4>
+                        <ul>
+                            <li>Hour: sin/cos encoding (24-hour cycle)</li>
+                            <li>Day of week: sin/cos encoding (7-day cycle)</li>
+                            <li>Month: sin/cos encoding (12-month cycle)</li>
+                            <li>Captures seasonal patterns effectively</li>
+                        </ul>
+                    </div>
+                    <div class="content-block">
+                        <h4>Lag Features</h4>
+                        <ul>
+                            <li>Temperature: 1, 3, 6, 12, 24 hour lags</li>
+                            <li>Outage: 1, 3 hour lags</li>
+                            <li>GCQ/Alert levels: 1, 6 hour lags</li>
+                            <li>Converted to 5-minute steps (×12 multiplier)</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="content-block">
+                    <h4>Advanced Scaling Strategy</h4>
+                    <ul>
+                        <li><strong>Features:</strong> Global MinMaxScaler fitted on training data only</li>
+                        <li><strong>Target:</strong> Separate MinMaxScaler per calendar year</li>
+                        <li>Handles non-stationary trends and seasonal variations</li>
+                        <li>Prevents data leakage from future periods</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="flow-arrow">↓</div>
+            
+            <!-- Stage 3: Data Windowing -->
+            <div class="stage data">
+                <div class="stage-header">
+                    <div class="stage-icon">🪟</div>
+                    <div class="stage-title">Stage 3: Sliding Window Dataset Creation</div>
+                </div>
+                <div class="stage-content">
+                    <div class="content-block">
+                        <h4>Window Configuration</h4>
+                        <ul>
+                            <li><strong>Look-back window (W):</strong> 48 hours = 576 steps</li>
+                            <li><strong>Forecast horizon (H):</strong> 48 hours = 576 steps</li>
+                            <li><strong>Input shape:</strong> [batch, 576, n_features]</li>
+                            <li><strong>Target shape:</strong> [batch, 576, 1] (TOTAL only)</li>
+                        </ul>
+                    </div>
+                    <div class="content-block">
+                        <h4>Data Splits</h4>
+                        <ul>
+                            <li><strong>Training:</strong> Until 2023-12-25</li>
+                            <li><strong>Validation:</strong> 2023-12-26 to 2024-11-25</li>
+                            <li><strong>Test:</strong> After 2024-11-25</li>
+                            <li>Time-aware splitting prevents data leakage</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="code-snippet">
+class LoadWindowDataset(Dataset):
+    def __getitem__(self, idx):
+        x = self.data[idx: idx + self.window]                    # [W, F] 
+        y_seq = self.data[idx + self.window: idx + self.window + self.horizon, -1:]  # [H, 1]
+        y_last = y_seq[-1, 0]  # Last timestep value
+        return torch.tensor(x), torch.tensor(y_seq), torch.tensor([y_last])
+                </div>
+            </div>
+            
+            <div class="flow-arrow">↓</div>
+            
+            <!-- Stage 4: Model Architecture -->
+            <div class="stage model">
+                <div class="stage-header">
+                    <div class="stage-icon">🧠</div>
+                    <div class="stage-title">Stage 4: LSTM Autoencoder Architecture</div>
+                </div>
+                
+                <div class="model-arch">
+                    <h4 style="text-align: center; margin-bottom: 20px; color: #1e40af; font-size: 1.2rem;">Model Flow</h4>
+                    <div class="arch-flow">
+                        <div class="arch-box">
+                            <h5>Input</h5>
+                            <p>[B, 576, F]</p>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="arch-box">
+                            <h5>LSTM Encoder 1</h5>
+                            <p>256 hidden units</p>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="arch-box">
+                            <h5>LSTM Encoder 2</h5>
+                            <p>128 hidden units</p>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="arch-box">
+                            <h5>Attention Pool</h5>
+                            <p>Weighted context</p>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="arch-box">
+                            <h5>Latent Space</h5>
+                            <p>64 dimensions</p>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="arch-box">
+                            <h5>Forecast Head</h5>
+                            <p>[B, 576, 1]</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="stage-content">
+                    <div class="content-block">
+                        <h4>Encoder Components</h4>
+                        <ul>
+                            <li>Two-layer LSTM encoder (256→128 units)</li>
+                            <li>LayerNorm for training stability</li>
+                            <li>Attention mechanism for temporal focus</li>
+                            <li>Compresses sequence to fixed-size latent vector</li>
+                        </ul>
+                    </div>
+                    <div class="content-block">
+                        <h4>Forecasting Strategy</h4>
+                        <ul>
+                            <li>Concatenates latent vector + last observed features</li>
+                            <li>Multi-layer forecasting head with dropout</li>
+                            <li>Direct multi-step prediction (no autoregression)</li>
+                            <li>Outputs full 48-hour trajectory in one pass</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="highlight">
+                    <strong>Architecture Insight:</strong> The model uses attention pooling to create a context vector from the encoded sequence, then conditions forecasting on both this context and the most recent observations for better short-term accuracy.
+                </div>
+            </div>
+            
+            <div class="flow-arrow">↓</div>
+            
+            <!-- Stage 5: Training -->
+            <div class="stage training">
+                <div class="stage-header">
+                    <div class="stage-icon">🏋️</div>
+                    <div class="stage-title">Stage 5: Training Process</div>
+                </div>
+                <div class="stage-content">
+                    <div class="content-block">
+                        <h4>Loss Function</h4>
+                        <ul>
+                            <li><strong>Tail-weighted MSE:</strong> More emphasis on distant predictions</li>
+                            <li>Weight increases linearly from 0.5 to 1.5 across horizon</li>
+                            <li>Encourages better long-term forecasting accuracy</li>
+                            <li>Formula: weights × (pred - target)²</li>
+                        </ul>
+                    </div>
+                    <div class="content-block">
+                        <h4>Optimization</h4>
+                        <ul>
+                            <li><strong>Optimizer:</strong> Adam (lr=1e-3, weight_decay=1e-5)</li>
+                            <li><strong>Scheduler:</strong> ReduceLROnPlateau (patience=3)</li>
+                            <li><strong>Early Stopping:</strong> Patience=8, delta=1e-4</li>
+                            <li><strong>Gradient Clipping:</strong> Max norm = 1.0</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="content-block">
+                    <h4>Training Loop Features</h4>
+                    <ul>
+                        <li>Batch size: 32 with shuffle for training</li>
+                        <li>Real-time validation metrics calculation</li>
+                        <li>Inverse scaling for interpretable metrics</li>
+                        <li>Best model state preservation</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="flow-arrow">↓</div>
+            
+            <!-- Stage 6: Evaluation -->
+            <div class="stage evaluation">
+                <div class="stage-header">
+                    <div class="stage-icon">📈</div>
+                    <div class="stage-title">Stage 6: Comprehensive Evaluation</div>
+                </div>
+                
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <h5>RMSE</h5>
+                        <p>Root Mean Square Error for prediction accuracy</p>
+                    </div>
+                    <div class="metric-card">
+                        <h5>MAE</h5>
+                        <p>Mean Absolute Error for average deviation</p>
+                    </div>
+                    <div class="metric-card">
+                        <h5>R² Score</h5>
+                        <p>Coefficient of determination for model fit</p>
+                    </div>
+                    <div class="metric-card">
+                        <h5>Adjusted R²</h5>
+                        <p>R² adjusted for number of features</p>
+                    </div>
+                </div>
+                
+                <div class="stage-content">
+                    <div class="content-block">
+                        <h4>Multi-Horizon Analysis</h4>
+                        <ul>
+                            <li><strong>Last-step:</strong> 48-hour ahead point forecast</li>
+                            <li><strong>Full-path:</strong> Complete 48-hour trajectory</li>
+                            <li><strong>Hourly RMSE:</strong> Performance per forecast hour</li>
+                            <li>All metrics computed in original units via inverse scaling</li>
+                        </ul>
+                    </div>
+                    <div class="content-block">
+                        <h4>Performance Benchmarking</h4>
+                        <ul>
+                            <li><strong>Inference Speed:</strong> ~2ms per sample</li>
+                            <li><strong>Model Size:</strong> Displays parameter count</li>
+                            <li><strong>Visualization:</strong> Training curves & predictions</li>
+                            <li><strong>Sample Trajectories:</strong> Individual 48h paths</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="highlight">
+                    <strong>Evaluation Excellence:</strong> The system provides both aggregate metrics and detailed trajectory analysis, with proper inverse scaling to ensure all evaluations are in interpretable units.
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top: 40px; padding: 25px; background: linear-gradient(135deg, #f0f9ff 0%, #e0e7ff 100%); border-radius: 15px; text-align: center;">
+            <h3 style="color: #1e40af; margin-bottom: 15px;">🎯 Key Strengths of This Pipeline</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-top: 20px;">
+                <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #10b981;">
+                    <strong style="color: #047857;">Robust Data Handling</strong><br>
+                    <small style="color: #6b7280;">Per-year target scaling handles non-stationary trends</small>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                    <strong style="color: #1d4ed8;">Advanced Architecture</strong><br>
+                    <small style="color: #6b7280;">LSTM + attention for temporal pattern capture</small>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+                    <strong style="color: #7c3aed;">Smart Training</strong><br>
+                    <small style="color: #6b7280;">Tail-weighted loss emphasizes long-term accuracy</small>
+                </div>
+                <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
+                    <strong style="color: #dc2626;">Comprehensive Evaluation</strong><br>
+                    <small style="color: #6b7280;">Multi-horizon metrics with proper inverse scaling</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
