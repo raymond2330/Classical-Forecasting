@@ -43,9 +43,9 @@ class LoadWindowDataset(Dataset):
 # ----------------------------
 # Model
 # ----------------------------
-class LSTMAE_Forecaster(nn.Module):
+class LSTM_Forecaster(nn.Module):
     def __init__(self, n_features, window, horizon,
-                 enc1=256, enc2=128, dec1=128, dec2=256,
+                 enc1=256, enc2=128,
                  latent_dim=64, p_drop=0.2):
         super().__init__()
         self.n_features = n_features
@@ -72,17 +72,6 @@ class LSTMAE_Forecaster(nn.Module):
             nn.Linear(latent_dim, latent_dim)
         )
 
-        # Decoder (reconstruction branch; not used in loss here)
-        # kept to stay true to the AE architecture, but forward() returns only forecast yhat
-        self.dec1 = nn.LSTM(input_size=latent_dim, hidden_size=dec1, batch_first=True)
-        self.dec2 = nn.LSTM(input_size=dec1,       hidden_size=dec2, batch_first=True)
-        self.dec_proj = nn.Sequential(
-            nn.Linear(window * dec2, 128),
-            nn.ReLU(),
-            nn.Dropout(p_drop),
-            nn.Linear(128, window * n_features)
-        )
-
         # Forecast head (TOTAL for H steps)
         # condition on [latent || last_observed_features] to anchor short-term
         f_in = latent_dim + n_features
@@ -96,7 +85,7 @@ class LSTMAE_Forecaster(nn.Module):
     def forward(self, x):
         """
         x: [B, W, F]
-        return: yhat [B, H, 1]  (to fit your existing training loop)
+        return: yhat [B, H, 1]  (forecast output)
         """
         B, W, F = x.shape
 
@@ -123,7 +112,7 @@ class LSTMAE_Forecaster(nn.Module):
 # Early Stopping (CPU snapshot)
 # ----------------------------
 class EarlyStopping:
-    def __init__(self, patience=25, delta=1e-4, verbose=True):
+    def __init__(self, patience=5, delta=1e-4, verbose=True):
         self.patience, self.delta, self.verbose = patience, delta, verbose
         self.best_loss = np.inf
         self.wait = 0
@@ -179,6 +168,16 @@ def cosine_warmup_scheduler(optimizer, warmup_epochs, total_epochs):
         return 0.5 * (1.0 + math.cos(math.pi * progress))
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+def mean_absolute_percentage_error(y_true, y_pred, eps=1e-6):
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    return np.mean(np.abs((y_true - y_pred) / (np.clip(np.abs(y_true), eps, None)))) * 100
+
+def smape(y_true, y_pred, eps=1e-6):
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    return 100 * np.mean(
+        2.0 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred) + eps)
+    )
+
 # ----------------------------
 # Main
 # ----------------------------
@@ -186,14 +185,14 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load
-    df = pd.read_csv('Demand_with_Temperature_FixedOutage.csv', parse_dates=['DateTime'], index_col='DateTime').fillna(0)
+    df = pd.read_csv('Demand_smoothed_kalman.csv', parse_dates=['DateTime'], index_col='DateTime').fillna(0)
     df.index = pd.to_datetime(df.index, format='mixed', errors='raise')
 
     # Impute outages causally (mark & fill)
-    if 'Outage' in df.columns:
-        df.loc[df['Outage'] == 1, 'TOTAL'] = pd.NA
-    df['TOTAL'] = df['TOTAL'].interpolate(method='time')
-    df['TOTAL'] = df['TOTAL'].bfill().ffill()
+    # if 'Outage' in df.columns:
+    #     df.loc[df['Outage'] == 1, 'TOTAL'] = pd.NA
+    # df['TOTAL'] = df['TOTAL'].interpolate(method='time')
+    # df['TOTAL'] = df['TOTAL'].bfill().ffill()
 
     # Cadence sanity
     _ = infer_5min_freq(df.index)
@@ -211,7 +210,7 @@ def main():
     steps_24h = 24 * steps_per_hour       # 288
 
     # Seasonality lags requested (5-min steps): ~1.7d, ~6 months, ~1 year
-    season_lags = [52520]
+    season_lags = [500]
     #season_lags = [500, 52520, 105040]
     for L in season_lags:
         df[f'TOTAL_lag{L}'] = df['TOTAL'].shift(L)
@@ -316,10 +315,12 @@ def main():
 
     # Window end timestamps (each sample's last target time) AFTER filtering
     times = df.index[W + H - 1 :]
+    
+    print(df.head(5))
 
     # Splits
-    train_end = pd.Timestamp('2023-12-25 23:59:59.971')
-    val_end   = pd.Timestamp('2024-11-25 23:59:59.971')
+    train_end = pd.Timestamp('2023-12-25 23:55:00')
+    val_end   = pd.Timestamp('2024-11-25 23:55:00')
 
     # ----------------------------
     # SCALING (leak-free)
@@ -394,11 +395,11 @@ def main():
                               num_workers=2, pin_memory=pin, persistent_workers=True)
 
     # Model / Optimizer / Loss / Scheduler
-    model = LSTMAE_Forecaster(n_features=n_features, window=W, horizon=H,
-        enc1=256, enc2=128, dec1=128, dec2=256, latent_dim=64, p_drop=0.2
+    model = LSTM_Forecaster(n_features=n_features, window=W, horizon=H,
+        enc1=256, enc2=128, latent_dim=64, p_drop=0.2
         ).to(device)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=1e-5)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
     es = EarlyStopping(patience=25, delta=1e-4, verbose=True)
 
     weights = torch.linspace(0.5, 1.5, steps=H, device=device).view(1, H, 1)
@@ -460,6 +461,7 @@ def main():
         rm  = root_mean_squared_error(inv_t, inv_p)
         mae = mean_absolute_error(inv_t, inv_p)
         r2  = r2_score(inv_t, inv_p)
+        mape = smape(inv_t, inv_p)
 
         pf = np.concatenate(preds_full_scaled, axis=0)
         tf = np.concatenate(truths_full_scaled, axis=0)
@@ -467,12 +469,13 @@ def main():
         inv_tf = tgt_scaler.inverse_transform(tf.reshape(-1,1))[:,0]
         rm_all  = root_mean_squared_error(inv_tf, inv_pf)
         mae_all = mean_absolute_error(inv_tf, inv_pf)
+        mape_all = smape(inv_tf, inv_pf)
 
         cur_lr = opt.param_groups[0]['lr']
         print(f"Ep{ep:02d} Train={train_losses[-1]:.4f} | Val={val_loss:.4f} | "
-              f"Val(last) RMSE={rm:.1f} MAE={mae:.1f} R²={r2:.3f} | "
-              f"Val(full) RMSE={rm_all:.1f} MAE={mae_all:.1f} | "
-              f"LR={cur_lr:.6f} | Time={time.time()-t0:.1f}s")
+                f"Val(last) RMSE={rm:.1f} MAE={mae:.1f} MAPE={mape:.2f}% R²={r2:.3f} | "
+                f"Val(full) RMSE={rm_all:.1f} MAE={mae_all:.1f} MAPE={mape_all:.2f}% | "
+                f"LR={cur_lr:.6f} | Time={time.time()-t0:.1f}s")
 
         _ = es.step(val_loss, model=model)
         if es.should_stop:
